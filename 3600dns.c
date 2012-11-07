@@ -89,8 +89,45 @@ int main(int argc, char *argv[]) {
   // process the arguments
 
   // construct the DNS request
+  unsigned char buf[65536],*qname; //Where we store our packet and name
+  DNS_HEADER *dns = NULL; //Where we store our header
+  QUESTION *qinfo = NULL; //Where we store our question type
+  unsigned char res[65536];
+
+  //Set the DNS structure to standard queries
+  dns=(DNS_HEADER*)&buf;
+
+  //set up the header
+  dns->id = (unsigned short)htons(1337); //Query ID
+  dns->qr = 0; //This is a query
+  dns->opcode = 0; //This is a standard query
+  dns->aa = 0; //Not Authoritative
+  dns->tc = 0; //This message is not truncated
+  dns->rd = 1; //Recursion Desired
+  dns->ra = 0; //Recursion not available! hey we dont have it
+  dns->z = 0; //Reserved for later use
+  dns->ad = 0; //Not authenticated data
+  dns->cd = 0; //checking disabled
+  dns->rcode = 0; //response code
+  dns->q_count = htons(1); //we have only 1 question
+  dns->ans_count = 0; //number of answer entries
+  dns->auth_count = 0; //number of authority entries
+  dns->add_count = 0; //number of resource entries
+
+  //plug in the name we want to get an IP for
+  qname =(unsigned char*)&buf[sizeof(DNS_HEADER)];
+  ChangetoDnsNameFormat(qname, argv[2]);
+//  strncpy(qname, argv[2], strlen(argv[2]+1));
+
+  qinfo = (QUESTION*)&buf[sizeof(DNS_HEADER) + (strlen((const char*)qname) + 1)];
+
+  //fill it
+  qinfo->qtype = htons(1); //we are requesting the ipv4 address
+  qinfo->qclass = htons(1); //its internet
+
 
   // send the DNS request (and call dump_packet with your request)
+  dump_packet(buf, sizeof(DNS_HEADER) + (strlen((const char*)qname) + 1) + sizeof(QUESTION));
   
   // first, open a UDP socket  
   int sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
@@ -98,10 +135,10 @@ int main(int argc, char *argv[]) {
   // next, construct the destination address
   struct sockaddr_in out;
   out.sin_family = AF_INET;
-  out.sin_port = htons(<<DNS server port number, as short>>);
-  out.sin_addr.s_addr = inet_addr(<<DNS server IP as char*>>);
+  out.sin_port = htons(53); //Port
+  out.sin_addr.s_addr = inet_addr("129.10.112.152");  //DNS Server
 
-  if (sendto(sock, <<your packet>>, <<packet len>>, 0, &out, sizeof(out)) < 0) {
+  if (sendto(sock, buf, sizeof(buf), 0, &out, sizeof(out)) < 0) { //Points to packet and packet len
     // an error occurred
   }
 
@@ -116,12 +153,12 @@ int main(int argc, char *argv[]) {
 
   // construct the timeout
   struct timeval t;
-  t.tv_sec = <<your timeout in seconds>>;
+  t.tv_sec = 5; //timeout in seconds
   t.tv_usec = 0;
 
   // wait to receive, or for a timeout
   if (select(sock + 1, &socks, NULL, NULL, &t)) {
-    if (recvfrom(sock, <<your input buffer>>, <<input len>>, 0, &in, &in_len) < 0) {
+    if (recvfrom(sock, res, sizeof(res), 0, &in, &in_len) < 0) {
       // an error occured
     }
   } else {
@@ -131,4 +168,26 @@ int main(int argc, char *argv[]) {
   // print out the result
   
   return 0;
+}
+
+//this will convert www.google.com to 3www6google3com ;got it :)
+void ChangetoDnsNameFormat(unsigned char* dns,unsigned char* host)
+{
+  int lock=0 , i;
+
+  strcat((char*)host,".");
+
+  for(i=0 ; i<(int)strlen((char*)host) ; i++)
+  {
+    if(host[i]=='.')
+    {
+      *dns++=i-lock;
+      for(;lock<i;lock++)
+      {
+        *dns++=host[lock];
+      }
+      lock++; //or lock=i+1;
+    }
+  }
+  *dns++='\0';
 }
