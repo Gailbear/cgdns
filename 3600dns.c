@@ -170,7 +170,7 @@ int main(int argc, char *argv[]) {
   return 0;
 }
 
-//this will convert www.google.com to 3www6google3com ;got it :)
+//this will convert www.google.com to 3www6google3com
 void ChangetoDnsNameFormat(unsigned char* dns,unsigned char* host)
 {
   int lock=0 , i;
