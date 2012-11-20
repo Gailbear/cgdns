@@ -87,12 +87,24 @@ int main(int argc, char *argv[]) {
    */
 
   // process the arguments
+  if (argc != 3) {
+    printf("ERROR\tnot implemented.\n");
+    return 0;
+  }
+  int port = 53; // default
+  char *ip_address = ++argv[1];
+  char *colon = strchr(ip_address, ':');
+  if(colon){
+    *colon = '\0';
+    port = atoi(++colon);
+  }
+
 
   // construct the DNS request
   unsigned char buf[65536],*qname; //Where we store our packet and name
   DNS_HEADER *dns = NULL; //Where we store our header
   QUESTION *qinfo = NULL; //Where we store our question type
-  unsigned char res[65536];
+  unsigned char res[65536]; //Where we store the result
 
   //Set the DNS structure to standard queries
   dns=(DNS_HEADER*)&buf;
@@ -127,7 +139,8 @@ int main(int argc, char *argv[]) {
 
 
   // send the DNS request (and call dump_packet with your request)
-  dump_packet(buf, sizeof(DNS_HEADER) + (strlen((const char*)qname) + 1) + sizeof(QUESTION));
+  int packet_len = sizeof(DNS_HEADER) + strlen(qname) + 1 + sizeof(QUESTION);
+  dump_packet(buf, packet_len);
   
   // first, open a UDP socket  
   int sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
@@ -135,11 +148,13 @@ int main(int argc, char *argv[]) {
   // next, construct the destination address
   struct sockaddr_in out;
   out.sin_family = AF_INET;
-  out.sin_port = htons(53); //Port
-  out.sin_addr.s_addr = inet_addr("129.10.112.152");  //DNS Server
+  out.sin_port = htons(port); //Port
+  out.sin_addr.s_addr = inet_addr(ip_address);  //DNS Server
 
-  if (sendto(sock, buf, sizeof(buf), 0, &out, sizeof(out)) < 0) { //Points to packet and packet len
+  if (sendto(sock, buf, packet_len, 0, &out, sizeof(out)) < 0) { //Points to packet and packet len
     // an error occurred
+    printf("ERROR\tdid not send packet.\n");
+    return 0;
   }
 
   // wait for the DNS reply (timeout: 5 seconds)
@@ -160,13 +175,154 @@ int main(int argc, char *argv[]) {
   if (select(sock + 1, &socks, NULL, NULL, &t)) {
     if (recvfrom(sock, res, sizeof(res), 0, &in, &in_len) < 0) {
       // an error occured
+      printf("ERROR\tno data received.\n");
+      return 0;
     }
   } else {
     // a timeout occurred
+    printf("NORESPONSE\n");
+    return 0;
   }
 
-  // print out the result
+  // put results into structures
+  memcpy(dns, res, sizeof(DNS_HEADER));
+  dns->id = ntohs(dns->id);
+  dns->q_count = ntohs(dns->q_count);
+  dns->ans_count = ntohs(dns->ans_count);
+  dns->auth_count = ntohs(dns->auth_count);
+  dns->add_count = ntohs(dns->add_count);
+
+  if(dns->rcode == 3) {
+    printf("NOTFOUND\n");
+    return 0;
+  }
+
+  int index = 12;
+  QUERY queries[dns->q_count];
+  for(int i = 0; i < dns->q_count; i++){
+    char *qname = malloc(255);
+    int qindex = 0;
+    char count = 0;
+    while(res[index] != '\0'){
+      if(count == 0){
+        count = res[index];
+        qname[qindex] = '.';
+      }else {
+        qname[qindex] = res[index];
+        count --;
+      }
+      qindex ++;
+      index ++;
+    }qname[qindex] = res[index];
+    // malloc the non-temp string to length
+    queries[i].name = (char *) malloc(qindex + 1);
+    strncpy(queries[i].name, qname, qindex);
+    free(qname);
+    // get rest of query information
+    QUESTION q;
+    q.qtype = (res[index+1] << 8) + res[index+2];
+    q.qclass = (res[index+3] << 8) + res[index +4];
+    queries[i].ques = &q;
+    index += 5;
+  }
+
+  RES_RECORD answers[dns->ans_count];
+  for(int i = 0; i < dns->ans_count; i++){
+    char *tmp_name = (char *) malloc(255);
+    int nindex = 0;
+    char count = 0;
+    int index_restore = 0;
+    while(res[index] != '\0'){
+      // find label length if count == 0
+      if(count == 0){
+        // check for a pointer
+        if(res[index] & 0x10000000){
+          unsigned short ptr = (res[index] << 8) + res[index+1];
+          ptr &= 0x0011111111111111;
+          if (!index_restore) index_restore = index + 1;
+          index = ptr;
+          continue;
+        }
+        count = res[index];
+        tmp_name[nindex] = ".";
+      } else {
+        tmp_name[nindex] = res[index];
+        count --;
+      }
+      nindex ++;
+      index ++;
+    }
+    tmp_name[nindex] = res[index]; // null terminator
+    // malloc the name string, free the tmp string, restore index
+    answers[i].name = malloc(nindex + 1);
+    strncpy(answers[i].name, tmp_name, nindex);
+    free(tmp_name);
+    if(index_restore) index = index_restore;
+    R_DATA rd;
+    rd.type = (res[index] << 8) + res[index + 1];
+    rd._class = (res[index + 2] << 8) + res[index + 3];
+    rd.ttl = (res[index +4] << 24) + (res[index + 5] << 16) + (res[index + 6] << 8) + res[index + 7];
+    rd.data_len = (res[index + 8] << 8) + res[index + 9];
+    answers[i].resource = &rd;
+    index += 10;
+
+    // parse rdata
+    if (rd.type == 1){
+     char rdata[4];
+     for(int j = 0; j < 4; j++){
+       rdata[j] = res[index + j];
+     }
+     answers[i].rdata = rdata;
+     index += 4;
+   }
+   if (rd.type == 5) {
+     tmp_name = malloc(255);
+     nindex = 0;
+     count = 0;
+     index_restore = 0;
+      while(res[index] != '\0'){
+        // find label length if count == 0
+        if(count == 0){
+          // check for a pointer
+          if(res[index] & 0x10000000){
+            unsigned short ptr = (res[index] << 8) + res[index+1];
+            ptr &= 0x0011111111111111;
+            if(!index_restore) index_restore = index + 1;
+            index = ptr;
+            continue;
+          }
+          count = res[index];
+          tmp_name[nindex] = ".";
+        } else {
+          tmp_name[nindex] = res[index];
+          count --;
+        }
+        nindex ++;
+        index ++;
+      }
+      tmp_name[nindex] = res[index]; // null terminator
+    // malloc the name string, free the tmp string, restore index
+    answers[i].name = malloc(nindex + 1);
+    strncpy(answers[i].name, tmp_name, nindex);
+    free(tmp_name);
+    if(index_restore) index = index_restore;
+   }
+  }
+
+  // ignore rest of packet
   
+  // print out answers
+  for(int i = 0; i < dns->ans_count; i++){
+    if (answers[i].resource->type == 1){
+      printf("IP\t%d.%d.%d.%d\t", answers[i].rdata[0], answers[i].rdata[1], answers[i].rdata[2], answers[i].rdata[3]);
+    }
+    if (answers[i].resource->type == 5){
+      printf("CNAME\t%s\t", answers[i].rdata);
+    }
+    if(dns->aa) printf("auth\n");
+    else printf("nonauth\n");
+  }
+
   return 0;
 }
 
