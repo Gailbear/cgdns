@@ -129,7 +129,7 @@ int main(int argc, char *argv[]) {
 
   //plug in the name we want to get an IP for
   qname =(unsigned char*)&buf[sizeof(DNS_HEADER)];
-  ChangetoDnsNameFormat(qname, argv[2]);
+  ChangetoDnsNameFormat(qname, (unsigned char *)argv[2]);
 //  strncpy(qname, argv[2], strlen(argv[2]+1));
 
   qinfo = (QUESTION*)&buf[sizeof(DNS_HEADER) + (strlen((const char*)qname) + 1)];
@@ -140,7 +140,7 @@ int main(int argc, char *argv[]) {
 
 
   // send the DNS request (and call dump_packet with your request)
-  int packet_len = sizeof(DNS_HEADER) + strlen(qname) + 1 + sizeof(QUESTION);
+  int packet_len = sizeof(DNS_HEADER) + strlen((char *)qname) + 1 + sizeof(QUESTION);
   dump_packet(buf, packet_len);
   
   // first, open a UDP socket  
@@ -152,7 +152,7 @@ int main(int argc, char *argv[]) {
   out.sin_port = htons(port); //Port
   out.sin_addr.s_addr = inet_addr(ip_address);  //DNS Server
 
-  if (sendto(sock, buf, packet_len, 0, &out, sizeof(out)) < 0) { //Points to packet and packet len
+  if (sendto(sock, buf, packet_len, 0, (struct sockaddr *)&out, sizeof(out)) < 0) { //Points to packet and packet len
     // an error occurred
     printf("ERROR\tdid not send packet.\n");
     return 0;
@@ -174,7 +174,7 @@ int main(int argc, char *argv[]) {
 
   // wait to receive, or for a timeout
   if (select(sock + 1, &socks, NULL, NULL, &t)) {
-    if (recvfrom(sock, res, sizeof(res), 0, &in, &in_len) < 0) {
+    if (recvfrom(sock, res, sizeof(res), 0, (struct sockaddr *)&in, &in_len) < 0) {
       // an error occured
       printf("ERROR\tno data received.\n");
       return 0;
@@ -216,8 +216,8 @@ int main(int argc, char *argv[]) {
       index ++;
     }qname[qindex] = res[index];
     // malloc the non-temp string to length
-    queries[i].name = (char *) malloc(qindex + 1);
-    strncpy(queries[i].name, qname, qindex);
+    queries[i].name = (unsigned char *) malloc(qindex + 1);
+    strncpy((char *)queries[i].name, (char *)qname, qindex);
     free(qname);
     // get rest of query information
     QUESTION q;
@@ -245,7 +245,7 @@ int main(int argc, char *argv[]) {
           continue;
         }
         count = res[index];
-        tmp_name[nindex] = ".";
+        tmp_name[nindex] = '.';
       } else {
         tmp_name[nindex] = res[index];
         count --;
@@ -256,7 +256,7 @@ int main(int argc, char *argv[]) {
     tmp_name[nindex] = res[index]; // null terminator
     // malloc the name string, free the tmp string, restore index
     answers[i].name = malloc(nindex + 1);
-    strncpy(answers[i].name, tmp_name, nindex);
+    strncpy((char *)answers[i].name, (char *)tmp_name, nindex);
     free(tmp_name);
     if(index_restore) index = index_restore;
     R_DATA *rd = (R_DATA *) malloc(sizeof(R_DATA));
@@ -305,7 +305,7 @@ int main(int argc, char *argv[]) {
       tmp_name += 1;
     // malloc the name string, free the tmp string, restore index
     answers[i].rdata = malloc(nindex);
-    strncpy(answers[i].rdata, tmp_name, nindex - 1);
+    strncpy((char *)answers[i].rdata, (char *)tmp_name, nindex - 1);
     free(--tmp_name);
     if(index_restore) index = index_restore;
    }
