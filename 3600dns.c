@@ -18,6 +18,7 @@
 #include <arpa/inet.h>
 
 #include "3600dns.h"
+void ChangetoDnsNameFormat(unsigned char* dns,unsigned char* host);
 
 /**
  * This function will print a hex dump of the provided packet to the screen
@@ -228,9 +229,9 @@ int main(int argc, char *argv[]) {
 
   RES_RECORD answers[dns->ans_count];
   for(int i = 0; i < dns->ans_count; i++){
-    char *tmp_name = (char *) malloc(255);
+    unsigned char *tmp_name = (unsigned char *) malloc(255);
     int nindex = 0;
-    char count = 0;
+    unsigned char count = 0;
     int index_restore = 0;
     while(res[index] != '\0'){
       // find label length if count == 0
@@ -258,24 +259,24 @@ int main(int argc, char *argv[]) {
     strncpy(answers[i].name, tmp_name, nindex);
     free(tmp_name);
     if(index_restore) index = index_restore;
-    R_DATA rd;
-    rd.type = (res[index] << 8) + res[index + 1];
-    rd._class = (res[index + 2] << 8) + res[index + 3];
-    rd.ttl = (res[index +4] << 24) + (res[index + 5] << 16) + (res[index + 6] << 8) + res[index + 7];
-    rd.data_len = (res[index + 8] << 8) + res[index + 9];
-    answers[i].resource = &rd;
+    R_DATA *rd = (R_DATA *) malloc(sizeof(R_DATA));
+    rd->type = (res[index] << 8) + res[index + 1];
+    rd->_class = (res[index + 2] << 8) + res[index + 3];
+    rd->ttl = (res[index +4] << 24) + (res[index + 5] << 16) + (res[index + 6] << 8) + res[index + 7];
+    rd->data_len = (res[index + 8] << 8) + res[index + 9];
+    answers[i].resource = rd;
     index += 10;
 
     // parse rdata
-    if (rd.type == 1){
-     char rdata[4];
+    if (rd->type == 1){
+     unsigned char rdata[4];
      for(int j = 0; j < 4; j++){
        rdata[j] = res[index + j];
      }
      answers[i].rdata = rdata;
      index += 4;
    }
-   if (rd.type == 5) {
+   if (rd->type == 5) {
      tmp_name = malloc(255);
      nindex = 0;
      count = 0;
@@ -284,15 +285,15 @@ int main(int argc, char *argv[]) {
         // find label length if count == 0
         if(count == 0){
           // check for a pointer
-          if(res[index] & 0x10000000){
+          if(res[index] & 0xc0){
             unsigned short ptr = (res[index] << 8) + res[index+1];
-            ptr &= 0x0011111111111111;
+            ptr &= 0x3fff;
             if(!index_restore) index_restore = index + 1;
             index = ptr;
             continue;
           }
           count = res[index];
-          tmp_name[nindex] = ".";
+          tmp_name[nindex] = '.';
         } else {
           tmp_name[nindex] = res[index];
           count --;
@@ -301,10 +302,11 @@ int main(int argc, char *argv[]) {
         index ++;
       }
       tmp_name[nindex] = res[index]; // null terminator
+      tmp_name += 1;
     // malloc the name string, free the tmp string, restore index
-    answers[i].name = malloc(nindex + 1);
-    strncpy(answers[i].name, tmp_name, nindex);
-    free(tmp_name);
+    answers[i].rdata = malloc(nindex);
+    strncpy(answers[i].rdata, tmp_name, nindex - 1);
+    free(--tmp_name);
     if(index_restore) index = index_restore;
    }
   }
